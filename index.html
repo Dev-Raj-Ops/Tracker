@@ -895,7 +895,7 @@ body.dark-mode .w-streak-box{background:rgba(255,255,255,.04);}
 
   <!-- WIDGET -->
   <div class="screen" id="screen-widget">
-    <div class="header"><div><div class="header-title">Wid<span>get</span></div><div class="header-sub">Preview & install</div></div></div>
+    <div class="header"><div><div class="header-title">Wid<span>get</span></div><div class="header-sub">Live preview of your progress</div></div></div>
     <div class="scroll-area">
       <div class="section-header">Widget Size</div>
       <div class="widget-size-tabs">
@@ -910,15 +910,14 @@ body.dark-mode .w-streak-box{background:rgba(255,255,255,.04);}
         </div>
       </div>
       <div class="widget-instructions" style="margin-top:20px">
-        <h3>📲 Add to Home Screen</h3>
+        <h3>📐 About Widget Sizes</h3>
         <ol>
-          <li><strong>Android (Chrome):</strong> Tap ⋮ menu → <em>Add to Home screen</em></li>
-          <li><strong>iOS (Safari):</strong> Tap Share → <em>Add to Home Screen</em></li>
-          <li>Once installed, the app icon appears on your home screen</li>
-          <li>For a true Android widget, use <strong>KWGT</strong> or <strong>Widgetsmith</strong> and point to this page's data</li>
+          <li><strong>Small (1×1):</strong> Shows today's completion ring and percentage</li>
+          <li><strong>Medium (2×1):</strong> Ring + done count + streak + top 2 habits</li>
+          <li><strong>Large (2×2):</strong> Full overview — ring, streak, all today's habits</li>
         </ol>
         <div style="margin-top:12px;padding:10px;background:color-mix(in srgb,var(--accent) 10%,transparent);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.6">
-          💡 <strong style="color:var(--text)">Tip:</strong> The widget preview above is a live, pixel-accurate representation of how your data would appear in a home screen widget. It auto-refreshes whenever you complete a habit.
+          💡 <strong style="color:var(--text)">Tip:</strong> This is a live preview — it updates automatically whenever you complete a habit. The widget reflects your real data in real time.
         </div>
       </div>
     </div>
@@ -973,8 +972,8 @@ body.dark-mode .w-streak-box{background:rgba(255,255,255,.04);}
       <div class="section-header">Data & Storage</div>
       <div class="habit-card" style="cursor:default">
         <div style="font-size:13px;color:var(--text-muted);line-height:1.6;margin-bottom:12px">
-          📱 <strong style="color:var(--text)">Android:</strong> Your data is stored in the browser's native localStorage &amp; IndexedDB — the same storage Android uses for installed PWAs. Add this page to your Home Screen for a native app experience with persistent data.<br><br>
-          🔒 All data stays <strong style="color:var(--text)">on your device</strong> — nothing is sent to any server.
+          📱 <strong style="color:var(--text)">Native Storage:</strong> Your habits, logs and timetable are stored in the device's local storage and IndexedDB — data stays fully on your device and is never sent anywhere.<br><br>
+          🔒 All data is <strong style="color:var(--text)">private and offline</strong> — no account, no cloud, no tracking.
         </div>
         <button class="btn-secondary" onclick="clearAllData()" style="color:var(--accent2);border-color:var(--accent2);margin-top:0">🗑️ Clear All Data</button>
       </div>
@@ -1278,6 +1277,41 @@ body.dark-mode .w-streak-box{background:rgba(255,255,255,.04);}
 </div>
 
 <script>
+// ══════════════════════════════════════════════════
+//  NATIVE ANDROID BRIDGE
+//  Detects window.Android (injected by MainActivity's WebView)
+//  and wires up native calls. Falls back silently in browser.
+// ══════════════════════════════════════════════════
+window.IS_NATIVE_APP = !!(window.Android &&
+    typeof window.Android.isNativeApp === 'function' &&
+    window.Android.isNativeApp() === 'true');
+
+// nativeSave / nativeLoad — use SharedPreferences when native, localStorage otherwise
+window.nativeSave = function(key, val) {
+    try { if(window.IS_NATIVE_APP) Android.nativeSave(key, val); } catch(e){}
+    try { localStorage.setItem(key, val); } catch(e){}
+};
+window.nativeLoad = function(key) {
+    if(window.IS_NATIVE_APP) { try { const v=Android.nativeLoad(key); if(v) return v; } catch(e){} }
+    try { return localStorage.getItem(key)||''; } catch(e){ return ''; }
+};
+
+// Called by AlarmReceiver intent → MainActivity.onNewIntent → evaluateJavascript
+window.onNativeAlarmFired = function(habitId) {
+    // Wait for app to fully load, then open alarm modal
+    const tryOpen = () => {
+        if(typeof openAlarmModal === 'function') { openAlarmModal(habitId); }
+        else { setTimeout(tryOpen, 300); }
+    };
+    tryOpen();
+};
+
+// Called after POST_NOTIFICATIONS permission result
+window.onNativeNotifPermission = function(granted) {
+    if(granted) { const b=document.getElementById('notif-banner'); if(b) b.style.display='none'; }
+    if(typeof updateNotifStatus === 'function') updateNotifStatus();
+};
+
 // ══════════════════════════════════════════════════
 //  CONSTANTS
 // ══════════════════════════════════════════════════
@@ -1784,22 +1818,6 @@ function stopAlarmLoop(){
   if(alarmAudioEl){ try{ alarmAudioEl.pause(); alarmAudioEl.currentTime=0; }catch(e){} alarmAudioEl=null; }
 }
 
-function playRingtonePreview(id, btn){
-  stopPreview();
-  if(isCustomRingtone(id)){
-    const a=customAudioFiles.find(x=>x.id===id);
-    if(!a){ showToast('⚠️','File not found','Try uploading again'); return; }
-    previewAudio=new Audio(a.dataUrl);
-    previewAudio.volume=0.85;
-    previewAudio.play().then(()=>{
-      if(btn){ btn.classList.add('playing'); btn.textContent='⏹'; }
-      previewAudio.onended=()=>{ if(btn){btn.classList.remove('playing');btn.textContent='▶';} previewAudio=null; };
-      setTimeout(()=>{ if(previewAudio){stopPreview();} },6000);
-    }).catch(()=>{ showToast('⚠️','Tap anywhere','Then press ▶ to preview'); });
-  } else {
-    audioCtx.resume().then(()=>{ try{ BUILTIN_TONES.find(r=>r.id===id)?.play(audioCtx); }catch(e){} });
-  }
-}
 
 function playSuccess(){
   // Ascending victory chord — sine waves with sustain
@@ -1870,7 +1888,12 @@ function scheduleHabit(h){
   const [hh,mm]=h.time.split(':').map(Number);
   const now=new Date(),fire=new Date();fire.setHours(hh,mm,0,0);
   if(fire<=now)fire.setDate(fire.getDate()+1);
+  // Browser: use setTimeout (works while tab is open)
   scheduledTimers[h.id]=setTimeout(()=>{if(isHabitDueOn(h,new Date()))triggerAlarm(h.id);scheduleHabit(h);},fire-now);
+  // Native Android: use exact AlarmManager (works even when app is killed)
+  if(window.IS_NATIVE_APP){
+    try{ Android.scheduleAlarm(h.id, h.name, h.emoji||'⏰', fire.getTime()); }catch(e){}
+  }
 }
 function triggerAlarm(habitId){
   audioCtx.resume().then(()=>{
@@ -1954,12 +1977,6 @@ function openQuickTimer(){
   if(!h){showToast('⏱','No timer set','Add a timer duration to a habit first');return;}
   openTimerForHabit(h.id);
 }
-function closeTimerOverlay(){
-  clearInterval(timerInterval);timerRunning=false;
-  hideMiniBar();
-  document.getElementById('timer-overlay').classList.remove('open');
-  renderHome();
-}
 
 // ── Page Visibility — keep timer accurate when tab is hidden ──
 let timerHiddenAt=0;
@@ -2017,14 +2034,35 @@ function resetTimer(){
   hideMiniBar();
   updateTimerDisplay();
 }
-function doneTimer(){clearInterval(timerInterval);timerRunning=false;hideMiniBar();if(timerHabitId)toggleHabit(timerHabitId);closeTimerOverlay();}
-function doneTimerFromMini(){clearInterval(timerInterval);timerRunning=false;hideMiniBar();if(timerHabitId)toggleHabit(timerHabitId);renderHome();}
 
 // ── Background mode ──
 function sendTimerToBackground(){
   document.getElementById('timer-overlay').classList.remove('open');
   showMiniBar();
   showToast('⬇','Running in background','Tap the bar to return to timer');
+  // Native: start foreground service so timer survives app backgrounding
+  if(window.IS_NATIVE_APP && timerHabitId){
+    const h=habits.find(x=>x.id===timerHabitId);
+    try{ Android.startTimerService(timerHabitId, h?h.name:'Timer', h?h.emoji:'⏱', timerLeft); }catch(e){}
+  }
+}
+function doneTimer(){
+  clearInterval(timerInterval);timerRunning=false;hideMiniBar();
+  if(window.IS_NATIVE_APP){ try{ Android.stopTimerService(); }catch(e){} }
+  if(timerHabitId)toggleHabit(timerHabitId);
+  closeTimerOverlay();
+}
+function doneTimerFromMini(){
+  clearInterval(timerInterval);timerRunning=false;hideMiniBar();
+  if(window.IS_NATIVE_APP){ try{ Android.stopTimerService(); }catch(e){} }
+  if(timerHabitId)toggleHabit(timerHabitId);renderHome();
+}
+function closeTimerOverlay(){
+  clearInterval(timerInterval);timerRunning=false;
+  hideMiniBar();
+  if(window.IS_NATIVE_APP){ try{ Android.stopTimerService(); }catch(e){} }
+  document.getElementById('timer-overlay').classList.remove('open');
+  renderHome();
 }
 function bringTimerToFront(){
   document.getElementById('timer-overlay').classList.add('open');
@@ -2043,11 +2081,9 @@ function updateMiniBar(){
   if(bar.style.display==='none') return;
   const m=Math.floor(timerLeft/60),s=timerLeft%60;
   document.getElementById('timer-mini-time').textContent=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-  // Mini ring progress
   const prog=timerTotal>0?timerLeft/timerTotal:1;
-  const C=2*Math.PI*14; // r=14
+  const C=2*Math.PI*14;
   document.getElementById('mini-ring-prog').style.strokeDashoffset=C*(1-prog);
-  // Change ring color by urgency
   const col=timerLeft<=10?'var(--error)':timerLeft<=30?'var(--warn)':'var(--accent)';
   document.getElementById('mini-ring-prog').style.stroke=col;
 }
@@ -2260,7 +2296,11 @@ function toggleHabit(id){
     showToast('✅',h.name,'Logged at '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}));
   }
 }
-function deleteHabit(id){habits=habits.filter(h=>h.id!==id);saveHabits();renderHome();}
+function deleteHabit(id){
+  habits=habits.filter(h=>h.id!==id);
+  if(window.IS_NATIVE_APP){ try{ Android.cancelAlarm(id); }catch(e){} }
+  saveHabits();renderHome();
+}
 function deleteHabitFromModal(){
   if(!editingId)return;
   if(!confirm('Delete this habit? This cannot be undone.'))return;
@@ -2385,7 +2425,6 @@ function adjustTime(part,delta){
   }
   updateTimePickerDisplay();
 }
-function toggleAMPM(){ tpAM=!tpAM; updateTimePickerDisplay(); }
 function confirmAlarmTime(){
   tpSet=true;
   document.getElementById('time-picker-panel').style.display='none';
@@ -2513,8 +2552,16 @@ function switchScreen(name,el){
   if(name==='log')renderLog();if(name==='stats')renderStats();if(name==='settings'){updateNotifStatus();renderGlobalAudioList();}if(name==='widget')renderWidget();
   if(name==='timetable')renderTimetable();
 }
-function saveHabits(){localStorage.setItem('hf_habits',JSON.stringify(habits));}
-function saveLogs()  {localStorage.setItem('hf_logs',  JSON.stringify(logs));}
+function saveHabits(){
+  const json=JSON.stringify(habits);
+  localStorage.setItem('hf_habits',json);
+  if(window.IS_NATIVE_APP){ try{ Android.nativeSave('hf_habits',json); }catch(e){} }
+}
+function saveLogs(){
+  const json=JSON.stringify(logs);
+  localStorage.setItem('hf_logs',json);
+  if(window.IS_NATIVE_APP){ try{ Android.nativeSave('hf_logs',json); }catch(e){} }
+}
 function clearAllData(){if(!confirm('Clear all habits and logs?'))return;habits=[];logs=[];saveHabits();saveLogs();renderHome();showToast('🗑️','Cleared','');}
 
 // ══════════════════════════════════════════════════
