@@ -2365,7 +2365,13 @@ function initTimePicker(timeStr){
     tpHour = hh===0?12:hh>12?hh-12:hh;
     tpMin = mm;
   } else {
-    tpHour=7; tpMin=0; tpAM=true; tpSet=false;
+    // Default to current time
+    const now=new Date();
+    const h=now.getHours(), m=now.getMinutes();
+    tpAM = h<12;
+    tpHour = h===0?12:h>12?h-12:h;
+    tpMin = m;
+    tpSet=false;
   }
   updateTimePickerDisplay();
 }
